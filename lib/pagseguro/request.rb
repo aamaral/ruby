@@ -10,29 +10,78 @@ module PagSeguro
     # Perform a GET request.
     #
     # # +path+: the path that will be requested. Must be something like <tt>"transactions/code/739D69-79C052C05280-55542D9FBB33-CAB2B1"</tt>.
+    # # +api_version+: the current PagSeguro API version of the requested service
     # # +data+: the data that will be sent as query string. Must be a Hash.
     # # +headers+: any additional header that will be sent through the request.
     #
-    def get(path, data = {}, headers = {})
-      execute :get, path, data, headers
+    def get(path, api_version, data = {}, headers = {})
+      execute :get, path, api_version, data, headers
+    end
+
+    def get_with_auth_on_url(path, api_version, credentials)
+      request.public_send(
+        :get,
+        PagSeguro.api_url("#{api_version}/#{path}?#{credentials_to_params(credentials)}")
+      )
+    end
+
+    def get_without_api_version(path, data={}, headers={})
+      request.get(path, extended_data(data), headers)
     end
 
     # Perform a POST request.
     #
     # # +path+: the path that will be requested. Must be something like <tt>"checkout"</tt>.
+    # # +api_version+: the current PagSeguro API version of the requested service
     # # +data+: the data that will be sent as body data. Must be a Hash.
     # # +headers+: any additional header that will be sent through the request.
     #
-    def post(path, data = {}, headers = {})
-      execute :post, path, data, headers
+    def post(path, api_version, data = {}, headers = {})
+      execute :post, path, api_version, data, headers
+    end
+
+    # Perform a POST request, sending XML data.
+    #
+    # # +path+: the path that will be requested. Must be something like <tt>"checkout"</tt>.
+    # # +api_version+: the current PagSeguro API version of the requested service
+    # # +credentials+: the credentials like ApplicationCredentials or AccountCredentials.
+    # # +data+: the data that will be sent as body data. Must be a XML.
+    #
+    def post_xml(path, api_version, credentials, data = '', options={})
+      credentials_params = credentials_to_params(credentials)
+      url_path = [api_version, path].reject(&:nil?).join('/')
+
+      request.post do
+        url PagSeguro.api_url("#{url_path}?#{credentials_params}")
+        headers "Content-Type" => "application/xml; charset=#{PagSeguro.encoding}"
+        headers.merge!(options[:headers]) if options[:headers]
+        body data
+      end
+    end
+
+    # Perform a PUT request, sending XML data.
+    #
+    # # +path+: the path that will be requested. Must be something like <tt>"checkout"</tt>.
+    # # +credentials+: the credentials like ApplicationCredentials or AccountCredentials.
+    # # +data+: the data that will be sent as body data. Must be a XML.
+    #
+    def put_xml(path, credentials, data)
+      full_url = PagSeguro.api_url("#{path}?#{credentials_to_params(credentials)}")
+
+      request.put do
+        url full_url
+        headers "Content-Type" => "application/xml; charset=#{PagSeguro.encoding}",
+                "Accept" => "application/vnd.pagseguro.com.br.v1+xml;charset=ISO-8859-1"
+        body data
+      end
     end
 
     # Perform the specified HTTP request. It will include the API credentials,
-    # encoding and additional headers.
-    def execute(request_method, path, data, headers) # :nodoc:
+    # api_version, encoding and additional headers.
+    def execute(request_method, path, api_version, data, headers) # :nodoc:
       request.public_send(
         request_method,
-        PagSeguro.api_url(path),
+        PagSeguro.api_url("#{api_version}/#{path}"),
         extended_data(data),
         extended_headers(request_method, headers)
       )
@@ -44,11 +93,13 @@ module PagSeguro
     end
 
     def extended_data(data)
-      data.merge(
-        email: data[:email] || PagSeguro.email,
-        token: data[:token] || PagSeguro.token,
-        charset: PagSeguro.encoding
-      )
+      if data[:credentials]
+        data.merge!(credentials_object(data))
+      else
+        data.merge!(global_credentials(data))
+      end
+      data.merge!({ charset: PagSeguro.encoding })
+      data.delete_if { |_, value| value.nil? }
     end
 
     def extended_headers(request_method, headers)
@@ -66,6 +117,43 @@ module PagSeguro
       {
         "Accept-Charset" => PagSeguro.encoding
       }
+    end
+
+    def credentials_to_params(credentials)
+      credentials_object(credentials: credentials)
+        .delete_if { |_, value| value.nil? }
+        .map { |key, value| "#{key}=#{value}" }
+        .join('&')
+    end
+
+    def credentials_object(data)
+      credentials = data.delete(:credentials)
+      if credentials.respond_to? :app_id
+        {
+          appId: credentials.app_id,
+          appKey: credentials.app_key,
+          authorizationCode: credentials.authorization_code
+        }
+      else
+        {
+          email: credentials.email,
+          token: credentials.token
+        }
+      end
+    end
+
+    def global_credentials(data)
+      if PagSeguro.app_id && PagSeguro.app_key
+        {
+          appId: PagSeguro.app_id,
+          appKey: PagSeguro.app_key
+        }
+      else
+        {
+          email: data[:email] || PagSeguro.email,
+          token: data[:token] || PagSeguro.token
+        }
+      end
     end
   end
 

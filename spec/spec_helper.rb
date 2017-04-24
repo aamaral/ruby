@@ -1,11 +1,7 @@
-require "simplecov"
-SimpleCov.start
-
 require "bundler/setup"
 Bundler.require(:default, :development)
 
 I18n.enforce_available_locales = false
-require "test_notifier/runner/rspec"
 require "fakeweb"
 require "pagseguro"
 
@@ -25,5 +21,15 @@ RSpec.configure do |config|
   config.before(:each) do
     load "./lib/pagseguro.rb"
     FakeWeb.clean_registry
+  end
+
+  config.after do
+    PagSeguro.configure do |config|
+      config.app_id = nil
+      config.environment = :production
+      config.app_key = nil
+      config.email = nil
+      config.token = nil
+    end
   end
 end

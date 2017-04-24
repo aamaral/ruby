@@ -1,19 +1,19 @@
 # Biblioteca de integração PagSeguro em Ruby
 
-[![Build Status](https://travis-ci.org/pagseguro/ruby.png?branch=master)](https://travis-ci.org/pagseguro/ruby)
-
-[![Code Climate](https://codeclimate.com/github/pagseguro/ruby.png)](https://codeclimate.com/github/pagseguro/ruby)
+[![Build Status](https://travis-ci.org/pagseguro/ruby.svg?branch=master)](https://travis-ci.org/pagseguro/ruby)
+[![Code Climate](https://codeclimate.com/github/pagseguro/ruby/badges/gpa.svg)](https://codeclimate.com/github/pagseguro/ruby)
 
 ## Descrição
 
 A biblioteca PagSeguro em Ruby é um conjunto de classes de domínio que facilitam, para o desenvolvedor Ruby, a utilização das funcionalidades que o PagSeguro oferece na forma de APIs. Com a biblioteca instalada e configurada, você pode facilmente integrar funcionalidades como:
 
- - Criar [requisições de pagamentos]
- - Consultar [transações por código]
- - Consultar [transações por intervalo de datas]
- - Consultar [transações abandonadas]
- - Receber [notificações]
-
+ - Criar [requisições de pagamentos] \(este serviço utiliza a versão **V2** da API\)
+ - Consultar [transações por código] \(este serviço utiliza a versão **V3** da API\)
+ - Consultar [transações por intervalo de datas] \(este serviço utiliza a versão **V3** da API)
+ - Consultar [transações abandonadas] \(este serviço utiliza a versão **V2** da API\)
+ - Receber [notificações] \(este serviço utiliza a versão **V3** da API\)
+ - Enviar estorno de transações \(este serviço utiliza a versão **V2** da API\)
+  - Cancelar transações \(este serviço utiliza a versão **V2** da API\)
 
 ## Requisitos
 
@@ -26,7 +26,7 @@ A biblioteca PagSeguro em Ruby é um conjunto de classes de domínio que facilit
  - Adicione a biblioteca ao seu Gemfile.
 
 ```ruby
-gem "pagseguro-oficial", git: "git://github.com/pagseguro/ruby.git"
+gem "pagseguro-oficial", "~> 2.5.0"
 ```
 
  - Execute o comando `bundle install`.
@@ -37,14 +37,16 @@ Para fazer a autenticação, você precisará configurar as credenciais do PagSe
 
 ```ruby
 PagSeguro.configure do |config|
-  config.token = "seu token"
-  config.email = "seu e-mail"
+  config.token       = "seu token"
+  config.email       = "seu e-mail"
+  config.environment = :production # ou :sandbox. O padrão é production.
+  config.encoding    = "UTF-8" # ou ISO-8859-1. O padrão é UTF-8.
 end
 ```
 
 O token de segurança está disponível em sua [conta do PagSeguro](https://pagseguro.uol.com.br/integracao/token-de-seguranca.jhtml).
 
-## Pagamentos
+## Pagamentos (API V2)
 
 Para iniciar uma requisição de pagamento, você precisa instanciar a classe `PagSeguro::PaymentRequest`. Isso normalmente será feito em seu controller de checkout.
 
@@ -76,6 +78,13 @@ class CheckoutController < ApplicationController
       }
     end
 
+    # Caso você precise passar parâmetros para a api que ainda não foram
+    # mapeados na gem, você pode fazer de maneira dinâmica utilizando um
+    # simples hash.
+    payment.extra_params << { paramName: 'paramValue' }
+    payment.extra_params << { senderBirthDate: '07/05/1981' }
+    payment.extra_params << { extraAmount: '-15.00' }
+
     response = payment.register
 
     # Caso o processo de checkout tenha dado errado, lança uma exceção.
@@ -92,7 +101,7 @@ class CheckoutController < ApplicationController
 end
 ```
 
-## Notificações
+## Notificações (API V3)
 
 O PagSeguro irá notificar a URL informada no processo de checkout. Isso é feito através do método `PagSeguro::PaymentRequest#notification_url`. Esta URL irá receber o código da notificação e tipo de notificação. Com estas informações, podemos recuperar as informações detalhadas sobre o pagamento.
 
@@ -114,9 +123,9 @@ class NotificationsController < ApplicationController
 end
 ```
 
-## Consultas
+## Consultas (API V3)
 
-### Transações abandonadas
+### Transações abandonadas (API V2)
 
 Para quantificar o número de transações abandonadas, você pode solicitar uma lista com histórico dessas transações.
 
@@ -170,9 +179,101 @@ while report.next_page?
 end
 ```
 
+### Histórico de status de transações
+
+É possível consultar o histórico de mudanças de status em transações
+
+```ruby
+response = PagSeguro::Transaction.find_status_history("transaction_code")
+
+response.each do |status|
+  puts "STATUS:"
+  puts "  code: #{status.code}"
+  puts "  date: #{status.date}"
+  puts "  notification_code: #{status.notification_code}"
+end
+```
+
+### Consultar opções de parcelamento
+
+Você pode consultar as opções de parcelamento para um determinado valor.
+
+```ruby
+installments = PagSeguro::Installment.find("100.00")
+
+puts "=> INSTALLMENTS"
+puts
+installments.each do |installment|
+  puts installment.inspect
+end
+
+visa_installments = PagSeguro::Installment.find("100.00", "visa")
+
+puts
+puts "=> VISA INSTALLMENTS"
+puts
+visa_installments.each do |installment|
+  puts installment.inspect
+end
+```
+
+## Modelo de aplicações
+
+### Setando autorizações
+
+```ruby
+  options = {
+    credentials: PagSeguro::ApplicationCredentials.new("app4521929942", "1D47384E6565EBE664DAEF9AD690438B"),
+    permissions: [:searches, :notifications],
+    notification_url: 'foo.com.br',
+    redirect_url: 'bar.com.br'
+  }
+  response = PagSeguro::Authorization.new(options).authorize
+```
+Em seguida, acesse o link para confirmar as autorizações
+```ruby
+  response.url
+```
+
+### Estorno de Transações
+
+Você pode estornar pagamentos que as transações estiverem com status: Paga (3), Disponível (4), Em disputa (5).
+
+```ruby
+  refund = PagSeguro::Refund.new
+  refund.transaction_code = "D5D5BE444148407891E497B421975599"
+
+  response = refund.register
+
+  if response.errors.any?
+    puts response.errors.join("\n")
+  else
+    puts "=> REFUND RESPONSE"
+    puts response.result
+  end
+```
+
+### Cancelamento de Transações
+
+Você pode cancelar transações que estiverem com status: Aguardando pagamento ou Em análise.
+
+```ruby
+  cancellation = PagSeguro::TransactionCancellation.new
+  cancellation.transaction_code = "AFB8FCF29496401681257C1ECE3A98FF"
+
+  cancellation.register
+
+  if cancellation.errors.any?
+    puts cancellation.errors.join("\n")
+  else
+    puts "=> CANCELLATION RESPONSE"
+    puts cancellation.result
+  end
+```
+
 ## API
 
-### PagSeguro::PaymentRequest
+### PagSeguro::PaymentRequest (utiliza versão V2)
 
 #### Definindo identificador do pedido
 
@@ -257,12 +358,38 @@ payment.max_uses = 100
 payment.max_age = 3600  # em segundos
 ```
 
-#### Definindo environment e/ou encoding
+#### Definindo encoding
 
 ```ruby
-PagSeguro.environment = "production" # production ou sandbox
 PagSeguro.encoding = "UTF-8" # UTF-8 ou ISO-8859-1
 ```
+
+## Checkout Transparente
+
+Encontre toda a documentação necessária para o checkout transparente aqui:
+https://github.com/pagseguro/ruby/blob/master/docs/transparent_checkout.md
+
+## Docker
+
+[Docker](http://www.docker.com/) é uma ferramenta open-source que cria uma
+camada de abstração e automação da virtualização do kernel do
+GNU/Linux[\*](https://en.wikipedia.org/wiki/Docker_(software)).
+
+Primeiro certifique-se de que o Docker está instalado e configurado
+corretamente, em seguida construa a imagem:
+
+    % docker build -t pagseguro .
+
+E para entrar na imagem:
+
+    % docker run --rm -it -v ${PWD}:/app pagseguro
+    root@5c480dd6e22a:/app#
+
+Ou se preferir você pode usar o
+[docker-compose](https://docs.docker.com/compose/):
+
+    % docker-compose run script
+    root@c6697abac095:/app#
 
 ## Dúvidas?
 
@@ -270,35 +397,7 @@ Caso tenha dúvidas ou precise de suporte, acesse nosso [fórum].
 
 ## Changelog
 
-2.0.6
-
- - Adicionando environment sandbox, entre outras melhorias
-
-2.0.5
-
- - Fixa a versão da biblioteca Aitch; a versão antiga não possui a mesma API utilizada nesta gem.
-
-2.0.4
-
- - PaymentRequest com email e token alternativos
-
-2.0.3
-
- - Ajuste no parser XML e paginação de relatórios.
- - Incluindo parâmetro para indicar a página inicial em uma busca de transações.
- - Correções de testes.
-
-2.0.2
-
- - Atualização dos tipos e códigos de meio de pagamento.
- - Correção do exemplo payment_request.
-
-2.0.1
-
- - Classes de domínios que representam pagamentos, notificações e transações.
- - Criação de checkouts via API.
- - Tratamento de notificações de pagamento enviadas pelo PagSeguro.
- - Consulta de transações.
+https://github.com/pagseguro/ruby/blob/master/CHANGELOG.md
 
 ## Licença
 
@@ -320,16 +419,22 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 Achou e corrigiu um bug ou tem alguma feature em mente e deseja contribuir?
 
-* Faça um fork.
-* Adicione sua feature ou correção de bug.
-* Envie um pull request no [GitHub].
+* Faça um fork
+* Adicione sua feature ou correção de bug (`git checkout -b my-new-feature`)
+* Commit suas mudanças (`git commit -am 'Added some feature'`)
+* Rode um push para o branch (`git push origin my-new-feature`)
+* Envie um Pull Request
+
+O código, os commits e os comentários devem ser em inglês.
+Adicione exemplos para sua nova feature.
+Se seu Pull Request for relacionado a uma versão específica, o Pull Request não deve ser enviado para o branch master e sim para o branch correspondente a versão.
 
 
   [requisições de pagamentos]: https://pagseguro.uol.com.br/v2/guia-de-integracao/api-de-pagamentos.html
-  [notificações]: https://pagseguro.uol.com.br/v2/guia-de-integracao/api-de-notificacoes.html
-  [transações por código]: https://pagseguro.uol.com.br/v2/guia-de-integracao/consulta-de-transacoes-por-codigo.html
-  [transações por intervalo de datas]: https://pagseguro.uol.com.br/v2/guia-de-integracao/consulta-de-transacoes-por-intervalo-de-datas.html
-  [transações abandonadas]: https://pagseguro.uol.com.br/v2/guia-de-integracao/consulta-de-transacoes-abandonadas.html
+  [notificações]: https://pagseguro.uol.com.br/v3/guia-de-integracao/api-de-notificacoes.html
+  [transações por código]: https://pagseguro.uol.com.br/v3/guia-de-integracao/consulta-de-transacoes-por-codigo.html
+  [transações por intervalo de datas]: https://pagseguro.uol.com.br/v3/guia-de-integracao/consulta-de-transacoes-por-intervalo-de-datas.html
+  [transações abandonadas]: https://pagseguro.uol.com.br/v3/guia-de-integracao/consulta-de-transacoes-abandonadas.html
   [fórum]: http://forum.pagseguro.uol.com.br/
   [Ruby]: http://www.ruby-lang.org/pt/
   [GitHub]: https://github.com/pagseguro/ruby/

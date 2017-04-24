@@ -3,6 +3,13 @@ require "spec_helper"
 
 describe PagSeguro::Errors do
   let(:response) { double }
+  let(:http_response) do
+    double(
+      :http_response,
+      error?: true,
+      error: Aitch::UnauthorizedError
+    )
+  end
 
   context "when have no response" do
     it "returns errors" do
@@ -15,11 +22,45 @@ describe PagSeguro::Errors do
     subject(:errors) { PagSeguro::Errors.new(response) }
 
     before do
-      response.stub unauthorized?: true, bad_request?: false
+      allow(response).to receive_messages(
+        error?: true,
+        error: Aitch::UnauthorizedError
+      )
+      errors.add(http_response)
     end
 
-    it { should_not be_empty }
-    it { should include(I18n.t("pagseguro.errors.unauthorized")) }
+    it { expect(errors).not_to be_empty }
+    it { expect(errors).to include(I18n.t("pagseguro.errors.unauthorized")) }
+  end
+
+  context "when not found" do
+    subject(:errors) { PagSeguro::Errors.new(response) }
+
+    before do
+      allow(response).to receive_messages(
+        error?: true,
+        error: Aitch::NotFoundError
+      )
+      errors.add(http_response)
+    end
+
+    it { expect(errors).not_to be_empty }
+    it { expect(errors).to include(I18n.t("pagseguro.errors.not_found")) }
+  end
+
+  context 'when forbidden' do
+    subject(:errors) { PagSeguro::Errors.new(response) }
+
+    before do
+      allow(response).to receive_messages(
+        error?: true,
+        error: Aitch::ForbiddenError
+      )
+      errors.add(http_response)
+    end
+
+    it { expect(errors).not_to be_empty }
+    it { expect(errors).to include(I18n.t("pagseguro.errors.forbidden")) }
   end
 
   context "when message can't be translated" do
@@ -38,7 +79,11 @@ describe PagSeguro::Errors do
     subject(:errors) { PagSeguro::Errors.new(response) }
 
     before do
-      response.stub data: xml, unauthorized?: false, bad_request?: true
+      allow(response).to receive_messages(
+        data: xml,
+        error?: true,
+        error: Aitch::BadRequestError
+      )
     end
 
     it { expect(errors).to include("Sample message") }
@@ -60,7 +105,11 @@ describe PagSeguro::Errors do
     subject(:errors) { PagSeguro::Errors.new(response) }
 
     before do
-      response.stub data: xml, unauthorized?: false, bad_request?: true
+      allow(response).to receive_messages(
+        data: xml,
+        error?: true,
+        error: Aitch::BadRequestError
+      )
     end
 
     it { expect(errors).to include("O parâmetro email deve ser informado.") }
@@ -83,7 +132,12 @@ describe PagSeguro::Errors do
     subject(:errors) { PagSeguro::Errors.new(response) }
 
     before do
-      response.stub data: xml, unauthorized?: false, bad_request?: true
+      allow(response).to receive_messages(
+        data: xml,
+        error?: true,
+        error: Aitch::BadRequestError
+      )
+      errors.add(http_response)
     end
 
     it { expect(errors).to include("Malformed request XML: XML document structures must start and end within the same entity..") }

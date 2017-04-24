@@ -1,6 +1,7 @@
 require "spec_helper"
 
 describe PagSeguro::PaymentRequest do
+  it_assigns_attribute :primary_receiver
   it_assigns_attribute :currency
   it_assigns_attribute :redirect_url
   it_assigns_attribute :extra_amount
@@ -9,8 +10,6 @@ describe PagSeguro::PaymentRequest do
   it_assigns_attribute :max_uses
   it_assigns_attribute :notification_url
   it_assigns_attribute :abandon_url
-  it_assigns_attribute :email
-  it_assigns_attribute :token
 
   it_ensures_type PagSeguro::Sender, :sender
   it_ensures_type PagSeguro::Shipping, :shipping
@@ -20,6 +19,61 @@ describe PagSeguro::PaymentRequest do
     payment = PagSeguro::PaymentRequest.new(sender: sender)
 
     expect(payment.sender).to eql(sender)
+  end
+
+  describe '#register split payment' do
+    before do
+      FakeWeb.register_uri(
+        :post,
+        'https://ws.pagseguro.uol.com.br/v2/checkouts?appId=id&appKey=key',
+        body: ""
+      )
+    end
+
+
+    let(:subject) do
+      PagSeguro::PaymentRequest.new(
+        receivers: receivers,
+        credentials: credentials,
+        primary_receiver: 'primary@example.com',
+        sender: sender
+      )
+    end
+
+    let(:credentials) do
+      PagSeguro::ApplicationCredentials.new('id', 'key')
+    end
+
+    let(:sender) do
+      PagSeguro::Sender.new(phone: PagSeguro::Phone.new(area_code: 1, number: 2345))
+    end
+
+    let(:receivers) do
+      [
+        { email: 'a@example.com', split: { amount: 1 } },
+        { email: 'b@example.com', split: { amount: 1 } }
+      ]
+    end
+
+    context 'ensure receivers' do
+      it 'are PagSeguro::Receiver' do
+        subject.receivers.each do |receiver|
+          expect(receiver).to be_a(PagSeguro::Receiver)
+        end
+      end
+
+      it 'have correct keys' do
+        expect(subject.receivers[0].email).to eq 'a@example.com'
+      end
+    end
+
+    it "changes url to checkouts" do
+      expect(PagSeguro::Request).to receive(:post_xml).with(
+        'checkouts', 'v2', credentials, a_string_matching(/<checkout>/)
+      )
+
+      subject.register
+    end
   end
 
   it "sets the items" do
@@ -32,37 +86,13 @@ describe PagSeguro::PaymentRequest do
     expect(payment.currency).to eql("BRL")
   end
 
-  describe "#email" do
-    before { PagSeguro.email = 'DEFAULT_EMAIL' }
-
-    it "returns the email set in the constructor" do
-      expect(described_class.new(email: 'foo').email).to eq('foo')
-    end
-
-    it "defaults to PagSeguro.email" do
-      expect(described_class.new.email).to eq('DEFAULT_EMAIL')
-    end
-  end
-
-  describe "#token" do
-    before { PagSeguro.token = 'DEFAULT_TOKEN' }
-
-    it "returns the token set in the constructor" do
-      expect(described_class.new(token: 'foo').token).to eq('foo')
-    end
-
-    it "defaults to PagSeguro.token" do
-      expect(described_class.new.token).to eq('DEFAULT_TOKEN')
-    end
-  end
-
   describe "#register" do
     let(:payment) { PagSeguro::PaymentRequest.new }
     before { FakeWeb.register_uri :any, %r[.*?], body: "" }
 
     it "serializes payment request" do
-      PagSeguro::PaymentRequest::Serializer
-        .should_receive(:new)
+      allow_any_instance_of(PagSeguro::PaymentRequest::RequestSerializer)
+        .to receive(:new)
         .with(payment)
         .and_return(double.as_null_object)
 
@@ -70,28 +100,23 @@ describe PagSeguro::PaymentRequest do
     end
 
     it "performs request" do
-      params = double
+      params = double(:Params)
 
-      params.should_receive(:merge).with({
-        email: PagSeguro.email,
-        token: PagSeguro.token
-      }).and_return(params)
+      allow_any_instance_of(PagSeguro::PaymentRequest::RequestSerializer).to receive(:to_params).and_return(params)
 
-      PagSeguro::PaymentRequest::Serializer.any_instance.stub to_params: params
-
-      PagSeguro::Request
-        .should_receive(:post)
-        .with("checkout", params)
+      expect(PagSeguro::Request)
+        .to receive(:post)
+        .with("checkout", "v2", params)
 
       payment.register
     end
 
     it "initializes response" do
       response = double
-      PagSeguro::Request.stub post: response
+      allow(PagSeguro::Request).to receive(:post).and_return(response)
 
-      PagSeguro::PaymentRequest::Response
-        .should_receive(:new)
+      expect(PagSeguro::PaymentRequest::Response)
+        .to receive(:new)
         .with(response)
 
       payment.register
@@ -99,9 +124,25 @@ describe PagSeguro::PaymentRequest do
 
     it "returns response" do
       response = double
-      PagSeguro::PaymentRequest::Response.stub new: response
+      allow(PagSeguro::PaymentRequest::Response).to receive(:new).and_return(response)
 
       expect(payment.register).to eql(response)
+    end
+  end
+
+  describe "#extra_params" do
+    it "is empty before initialization" do
+      expect(subject.extra_params).to be_empty
+    end
+
+    it "allows extra parameter addition" do
+      subject.extra_params << { extraParam: 'value' }
+      subject.extra_params << { itemParam1: 'value1' }
+
+      expect(subject.extra_params).to eql([
+        { extraParam: 'value' },
+        { itemParam1: 'value1' }
+      ])
     end
   end
 end

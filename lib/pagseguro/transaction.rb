@@ -1,7 +1,11 @@
 module PagSeguro
   class Transaction
+    ONE_DAY_IN_SECONDS = 86400
+    FIFTEEN_MINUTES_IN_SECONDS = 900
+
     include Extensions::MassAssignment
     include Extensions::EnsureType
+    include Extensions::Credentiable
 
     # When the payment request was created.
     attr_accessor :created_at
@@ -34,8 +38,8 @@ module PagSeguro
     # The discount amount.
     attr_accessor :discount_amount
 
-    # The PagSeguro fee amount.
-    attr_accessor :fee_amount
+    # The charged fees.
+    attr_reader :creditor_fees
 
     # The net amount.
     attr_accessor :net_amount
@@ -62,21 +66,21 @@ module PagSeguro
 
     # Set the transaction errors.
     attr_reader :errors
-    
+
     # Find a transaction by its transactionCode
     # Return a PagSeguro::Transaction instance
-    def self.find_by_code(code)
-      load_from_response Request.get("transactions/#{code}")
+    def self.find_by_code(code, options = {})
+      load_from_response send_request("transactions/#{code}", options)
     end
 
     # Find a transaction by its notificationCode.
     # Return a PagSeguro::Transaction instance.
-    def self.find_by_notification_code(code)
-      load_from_response Request.get("transactions/notifications/#{code}")
+    def self.find_by_notification_code(code, options = {})
+      load_from_response send_request("transactions/notifications/#{code}", options)
     end
 
     # Search transactions within a date range.
-    # Return a PagSeguro::Report instance.
+    # Return a PagSeguro::SearchByDate instance
     #
     # Options:
     #
@@ -87,16 +91,26 @@ module PagSeguro
     #
     def self.find_by_date(options = {}, page = 0)
       options = {
-        starts_at: Time.now - 86400,
+        starts_at: Time.now - ONE_DAY_IN_SECONDS,
         ends_at: Time.now,
         per_page: 50
       }.merge(options)
+      SearchByDate.new("transactions", options, page)
+    end
 
-      Report.new(Transaction, "transactions", options, page)
+    # Search a transaction by its reference code
+    # Return a PagSeguro::SearchByReference instance
+    #
+    # Options:
+    #
+    # # +reference+: the transaction reference code
+    #
+    def self.find_by_reference(reference, options = {})
+      SearchByReference.new("transactions", { reference: reference }.merge(options))
     end
 
     # Get abandoned transactions.
-    # Return a PagSeguro::Report instance.
+    # Return a PagSeguro::SearchByDate instance
     #
     # Options:
     #
@@ -107,26 +121,17 @@ module PagSeguro
     #
     def self.find_abandoned(options = {}, page = 0)
       options = {
-        starts_at: Time.now - 86400,
-        ends_at: Time.now - 900,
+        starts_at: Time.now - ONE_DAY_IN_SECONDS,
+        ends_at: Time.now - FIFTEEN_MINUTES_IN_SECONDS,
         per_page: 50
       }.merge(options)
 
-      Report.new(Transaction, "transactions/abandoned", options, page)
+      SearchAbandoned.new("transactions/abandoned", options, page)
     end
 
-    # Serialize the HTTP response into data.
-    def self.load_from_response(response) # :nodoc:
-      if response.success? and response.xml?
-        load_from_xml Nokogiri::XML(response.body).css("transaction").first
-      else
-        Response.new Errors.new(response)
-      end
-    end
-
-    # Serialize the XML object.
-    def self.load_from_xml(xml) # :nodoc:
-      new Serializer.new(xml).serialize
+    # Normalize creditor fees object
+    def creditor_fees=(creditor_fees)
+      @creditor_fees = ensure_type(CreditorFee, creditor_fees)
     end
 
     # Normalize the sender object.
@@ -137,6 +142,16 @@ module PagSeguro
     # Normalize the shipping object.
     def shipping=(shipping)
       @shipping = ensure_type(Shipping, shipping)
+    end
+
+    # Hold the transaction's payments
+    def payment_releases
+      @payment_releases ||= PaymentReleases.new
+    end
+
+    # Normalize the transaction's payments list
+    def payment_releases=(_payments)
+      _payments.each { |payment| payment_releases << payment }
     end
 
     # Hold the transaction's items.
@@ -159,9 +174,42 @@ module PagSeguro
       @status = ensure_type(PaymentStatus, status)
     end
 
+    # Set errors.
+    def errors
+      @errors ||= Errors.new
+    end
+
+    # Update all attributes
+    def update_attributes(attrs)
+      attrs.each { |name, value| send("#{name}=", value) }
+    end
+
+    # Serialize the XML object.
+    def self.load_from_xml(xml) # :nodoc:
+      new Serializer.new(xml).serialize
+    end
+
     private
+    def self.api_version
+      'v3'
+    end
+
     def after_initialize
       @errors = Errors.new
+    end
+
+    # Serialize the HTTP response into data.
+    def self.load_from_response(request) # :nodoc:
+      transaction = new
+      response = Response.new(request, transaction)
+      response.serialize
+
+      transaction
+    end
+
+    # Send a get request to v3 API version, with the path given
+    def self.send_request(path, options = {})
+      Request.get(path, api_version, options)
     end
   end
 end

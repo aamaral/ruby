@@ -1,13 +1,13 @@
 language: ruby
+before_install:
+  - gem update bundler
 rvm:
-  - 2.2.0
-  - 2.1.5
+  - 2.2.3
+  - 2.1.7
   - 2.0.0
   - 1.9.3
   - jruby-19mode
-
 notifications:
   email:
-    - fnando.vieira@gmail.com
-    - lucas.renan@codeminer42.com
-    - vinicius.palma@codeminer42.com
+    - dmitry.rocha@codeminer42.com
+    - rafael.belo@codeminer42.com
